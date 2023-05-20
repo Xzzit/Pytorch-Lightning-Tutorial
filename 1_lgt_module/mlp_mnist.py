@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
 
 import torchvision
 from torchvision import transforms
@@ -23,35 +25,6 @@ train_data, val_data = random_split(mnist, [train_size, val_size])
 train_loader = DataLoader(train_data, batch_size=32, shuffle=True)
 val_loader = DataLoader(val_data, batch_size=32, shuffle=True)
 test_loader = DataLoader(mnist_test, batch_size=32, shuffle=True)
-
-# Define the model
-class Model(nn.Module):
-    def __init__(self):
-        super(Model, self).__init__()
-        self.linear1 = nn.Linear(28*28, 256)
-        self.relu1 = nn.ReLU()
-        self.bn1 = nn.BatchNorm1d(256)
-        self.linear2 = nn.Linear(256, 256)
-        self.relu2 = nn.ReLU()
-        self.bn2 = nn.BatchNorm1d(256)
-        self.linear3 = nn.Linear(256, 128)
-        self.relu3 = nn.ReLU()
-        self.bn3 = nn.BatchNorm1d(128)
-        self.linear4 = nn.Linear(128, 10)
-
-    def forward(self, x):
-        x = x.view(-1, 28*28)
-        x = self.linear1(x)
-        x = self.relu1(x)
-        x = self.bn1(x)
-        x = self.linear2(x)
-        x = self.relu2(x)
-        x = self.bn2(x)
-        x = self.linear3(x)
-        x = self.relu3(x)
-        x = self.bn3(x)
-        x = self.linear4(x)
-        return x
     
 # Define the pytorch lightning module
 class Model(pl.LightningModule):
@@ -81,6 +54,36 @@ class Model(pl.LightningModule):
         x = self.bn3(x)
         x = self.linear4(x)
         return x
+    
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        scores = self.forward(x)
+        loss = F.cross_entropy(scores, y)
+        self.log('train_loss', loss)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        scores = self.forward(x)
+        loss = F.cross_entropy(scores, y)
+        self.log('val_loss', loss)
+        return loss
+    
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        scores = self.forward(x)
+        loss = F.cross_entropy(scores, y)
+        self.log('test_loss', loss)
+        return loss
+    
+    def predict_step(self, batch, batch_idx):
+        x, y = batch
+        scores = self.forward(x)
+        predictions = torch.argmax(scores, dim=1)
+        return predictions
+
+    def configure_optimizers(self):
+        return optim.Adam(self.parameters(), lr=1e-3)
 
 # Hyperparameters
 learning_rate = 0.001
@@ -92,10 +95,6 @@ model = Model().to(device)
 # torch.set_float32_matmul_precision('high')
 # model = torch.compile(model)
 
-# Define the loss function and optimizer
-criterion = nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
 # Create CUDA events for measuring time
 start_event = torch.cuda.Event(enable_timing=True)
 end_event = torch.cuda.Event(enable_timing=True)
@@ -104,22 +103,8 @@ end_event = torch.cuda.Event(enable_timing=True)
 start_event.record()
 
 # Train the model
-for epoch in range(num_epochs):
-    for batch_idx, (data, targets) in enumerate(train_loader):
-        # Get data to cuda if possible
-        data = data.to(device=device)
-        targets = targets.to(device=device)
-
-        # forward
-        scores = model(data)
-        loss = criterion(scores, targets)
-
-        # backward
-        optimizer.zero_grad()
-        loss.backward()
-
-        # gradient descent or adam step
-        optimizer.step()
+trainer = pl.Trainer(accelerator='gpu', devices=[0], min_epochs=1, max_epochs=3, precision='16-mixed')
+trainer.fit(model, train_loader, val_loader)
 
 # Measure the time for training
 end_event.record()
@@ -133,6 +118,7 @@ print(f"Training time: {elapsed_time_ms:.2f}s")
 def check_accuracy(loader, model):
     num_correct = 0
     num_samples = 0
+    model.to(device)
     model.eval()
     
     with torch.no_grad():
