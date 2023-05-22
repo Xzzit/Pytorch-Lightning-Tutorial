@@ -11,6 +11,7 @@ from torch.utils.data import random_split
 import pytorch_lightning as pl
 
 if __name__ == '__main__':
+    torch.set_float32_matmul_precision('high')
 
     # Create a dataset for training, validation and testing
     mnist = torchvision.datasets.MNIST(root='./data', train=True, 
@@ -106,7 +107,7 @@ if __name__ == '__main__':
 
     # Test the model
     print("Accuracy on training set: ")
-    trainer.test(model, train_loader)
+    trainer.test(model, DataLoader(train_data, shuffle=False, batch_size=32, num_workers=8))
 
     print("Accuracy on validation set: ")
     trainer.test(model, val_loader)
